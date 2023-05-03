@@ -1,0 +1,22 @@
+jobs:
+  trigger_internal_workflow:
+    if: ${{ github.event.inputs.run_on_internal_server == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger on-premises workflow
+        env:
+          GITHUB_ENTERPRISE_TOKEN: ${{ secrets.GITHUB_ENTERPRISE_TOKEN }}
+        run: |
+          GITHUB_ENTERPRISE_API_BASE="https://github.myinternal.net/api/v3"
+          REPO="${{ github.repository }}"
+          REF="${{ github.ref }}"
+          WORKFLOW_ID="your_workflow_id"
+          API_URL="$GITHUB_ENTERPRISE_API_BASE/repos/$REPO/actions/workflows/$WORKFLOW_ID/dispatches"
+
+          CUSTOM_INPUT_1="${{ github.event.inputs.custom_input_1 }}"
+          CUSTOM_INPUT_2="${{ github.event.inputs.custom_input_2 }}"
+
+          curl -X POST "$API_URL" \
+               -H "Accept: application/vnd.github+json" \
+               -H "Authorization: token $GITHUB_ENTERPRISE_TOKEN" \
+               -d "{\"ref\": \"$REF\", \"inputs\": {\"custom_input_1\": \"$CUSTOM_INPUT_1\", \"custom_input_2\": \"$CUSTOM_INPUT_2\"}}"
