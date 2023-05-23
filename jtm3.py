@@ -1,120 +1,119 @@
+import os
 import requests
 import json
-import os
 
-JIRA_URL = "https://YOUR_JIRA_INSTANCE_URL"
-USER_EMAIL = "YOUR_EMAIL_ADDRESS"
-API_TOKEN = os.getenv('JIRA_API_TOKEN')
+JIRA_URL = 'https://your_jira_instance'
+EMAIL = 'your_email'
+TOKEN = os.getenv('JIRA_API_TOKEN')
 
 headers = {
-    "Authorization": f"Basic {API_TOKEN}",
+    "Authorization": f"Basic {TOKEN}",
     "Content-Type": "application/json"
 }
 
-def create_test_and_update_status(story_key, test_summary, test_execution_status):
-    # Create a Test and link it to the parent story
-    test_fields = {
-        "project": {
-            "key": story_key.split("-")[0]  # Assuming the project key is the prefix of the story key
-        },
-        "summary": test_summary,
-        "description": "",
-        "issuetype": {
-            "name": "Test"
-        },
-        "labels": ["CloudRelease", "Regression"],
-        "customfield_XXXX": "Solution Testing",  # Replace XXXX with custom field id for 'Test Stage/Phase'
-        "customfield_YYYY": "Manual",  # Replace YYYY with custom field id for 'Test Type'
-    }
-
-    response = requests.post(
-        f"{JIRA_URL}/rest/api/2/issue/",
-        headers=headers,
-        data=json.dumps({"fields": test_fields})
-    )
-
-    if response.status_code != 201:
-        print(f"Error creating Test. Response: {response.text}")
-        return
-
-    test_key = response.json()["key"]
-
-    # Link the Test to the Story
-    link_issue_data = {
-        "type": {
-            "name": "Tests"  # This might need to be updated based on your configuration
-        },
-        "inwardIssue": {
-            "key": story_key
-        },
-        "outwardIssue": {
-            "key": test_key
-        },
-        "comment": {
-            "body": "Linking Test to Story"
+# Creates a test issue and link it to the story issue
+def create_test_and_link_to_story(story_key, test_summary):
+    # Create test
+    data = {
+        "fields": {
+            "project": {
+                "key": story_key.split('-')[0]
+            },
+            "summary": test_summary,
+            "description": "Created via API",
+            "issuetype": {
+                "name": "Test"
+            },
+            "labels": ["CloudRelease", "Regression"]
+            # Add custom fields as needed
         }
     }
 
-    response = requests.post(
-        f"{JIRA_URL}/rest/api/2/issueLink",
-        headers=headers,
-        data=json.dumps(link_issue_data)
-    )
+    response = requests.post(f"{JIRA_URL}/rest/api/3/issue", headers=headers, json=data)
 
-    if response.status_code != 201:
-        print(f"Error linking Test to Story. Response: {response.text}")
+    if response.status_code == 201:
+        test_key = response.json()['key']
 
-    # Create a Test Execution for the Test and set the status
-    test_execution_fields = {
-        "project": {
-            "key": story_key.split("-")[0]  # Assuming the project key is the prefix of the story key
-        },
-        "summary": "Test Execution for " + test_summary,
-        "description": "",
-        "issuetype": {
-            "name": "Test Execution"
-        },
-        "customfield_ZZZZ": [  # Replace ZZZZ with custom field id for 'Tests'
-            {
+        # Link test to story
+        data = {
+            "type": {
+                "name": "Tests",
+                "inward": "is tested by",
+                "outward": "tests"
+            },
+            "inwardIssue": {
+                "key": story_key
+            },
+            "outwardIssue": {
                 "key": test_key
             }
-        ]
-    }
+        }
+        response = requests.post(f"{JIRA_URL}/rest/api/3/issueLink", headers=headers, json=data)
+        return test_key if response.status_code == 201 else None
+    else:
+        return None
 
-    response = requests.post(
-        f"{JIRA_URL}/rest/api/2/issue/",
-        headers=headers,
-        data=json.dumps({"fields": test_execution_fields})
-    )
 
-    if response.status_code != 201:
-        print(f"Error creating Test Execution. Response: {response.text}")
-        return
-
-    test_execution_key = response.json()["key"]
-
-    # Update the status of the Test Execution
-    transition_id = "31" if test_execution_status == "pass" else "41"  # Replace '31' and '41' with actual transition ids for Pass and Fail
-
-    transition_data = {
-        "transition": {
-            "id": transition_id
+# Create a test execution for the test and set the status to pass/fail
+def create_test_execution_and_set_status(test_key, status):
+    # Create test execution
+    data = {
+        "fields": {
+            "project": {
+                "key": test_key.split('-')[0]
+            },
+            "summary": "Test Execution for " + test_key,
+            "description": "",
+            "issuetype": {
+                "name": "Test Execution"
+            },
+            "customfield_10000": [  # Replace with actual custom field id for 'Test'
+                {
+                    "key": test_key
+                }
+            ]
         }
     }
 
-    response = requests.post(
-        f"{JIRA_URL}/rest/api/2/issue/{test_execution_key}/transitions",
-        headers=headers,
-        data=json.dumps(transition_data)
-    )
+    response = requests.post(f"{JIRA_URL}/rest/api/3/issue", headers=headers, json=data)
 
-    if response.status_code != 204:
-        print(f"Error updating Test Execution status. Response: {response.text}")
+    if response.status_code == 201:
+        execution_key = response.json()['key']
 
-if __name__ == "__main__":
+        # Add result (pass/fail)
+        data = {
+            "info": {
+                "summary": "Execution of test " + test_key,
+                "description": "This execution was automatically created via API",
+                "user": EMAIL,
+                "status": {
+                    "id": "2" if status.lower() == 'pass' else '3'  # 2 is 'PASS', 3 is 'FAIL' in Xray
+                }
+            },
+            "tests": [{
+                "testKey": test_key
+            }]
+        }
+
+        response = requests.post(f"{JIRA_URL}/rest/raven/1.0/import/execution", headers=headers, json=data)
+        return execution_key if response.status_code == 200 else None
+    else:
+        return None
+
+def main():
     story_key = input("Enter the key of the story: ")
     test_summary = input("Enter the summary of the test: ")
-    test_execution_status = input("Enter the status of the test execution (pass or fail): ")
-    
-    create_test_and_update_status(story_key, test_summary, test_execution_status)
+    status = input("Enter the status of the test execution (pass or fail): ")
 
+    test_key = create_test_and_link_to_story(story_key, test_summary)
+    if test_key:
+        execution_key = create_test_execution_and_set_status(test_key, status)
+        if execution_key:
+            print("Test execution created and status set")
+        else:
+            print("Failed to create test execution or set status")
+    else:
+        print("Failed to create test or link to story")
+
+if __name__ == '__main__':
+    main()
